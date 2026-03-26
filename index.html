@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>OpenClaw Pet</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background: transparent;
+            user-select: none;
+            font-family: "PingFang SC", "SF Pro Rounded", sans-serif;
+        }
+        #pet-area {
+            width: 100%; height: 100%;
+            position: relative;
+            cursor: grab;
+        }
+        #pet-area:active { cursor: grabbing; }
+        #canvas-wrap {
+            width: 100%; height: 100%;
+            display: flex; justify-content: center; align-items: center;
+        }
+
+        /* 输入框 — 居中在猫下方 */
+        #chat-bar {
+            position: absolute;
+            bottom: 22px;
+            left: 0; right: 0;
+            display: flex;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.25s;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #chat-bar.show { opacity: 1; pointer-events: auto; }
+        #chat-bar-inner {
+            display: flex;
+            align-items: stretch;
+        }
+        #chat-input {
+            width: 230px;
+            padding: 6px 10px;
+            border: 2px solid #ccc;
+            border-right: none;
+            background: rgba(255,255,255,0.95);
+            color: #333;
+            font-size: 12px;
+            font-family: "PingFang SC", sans-serif;
+            outline: none;
+            border-radius: 0;
+        }
+        #chat-input::placeholder { color: #bbb; }
+        #chat-input:focus { border-color: #b3a0e6; }
+        #chat-input:focus + #send-btn { border-color: #b3a0e6; }
+        #send-btn {
+            padding: 0 14px;
+            border: 2px solid #ccc;
+            background: rgba(255,255,255,0.95);
+            color: #7c3aed;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: "PingFang SC", sans-serif;
+            cursor: pointer;
+            border-radius: 0;
+            letter-spacing: 2px;
+        }
+        #send-btn:hover { background: #f8f5ff; }
+        #send-btn.loading { color: #bbb; cursor: wait; }
+
+        /* 录音指示：猫咪旁边的小圆点动画 */
+        #rec-dot {
+            position: absolute;
+            display: none;
+            z-index: 20;
+        }
+        #rec-dot.show { display: block; }
+        #rec-dot svg { width: 24px; height: 24px; }
+        @keyframes recPulse {
+            0%, 100% { transform: scale(1); opacity: 0.9; }
+            50% { transform: scale(1.4); opacity: 0.4; }
+        }
+        #rec-dot .pulse-ring {
+            animation: recPulse 1.2s ease-in-out infinite;
+            transform-origin: center;
+        }
+
+        /* 右键菜单 */
+        #ctx-menu {
+            display: none; position: fixed;
+            background: rgba(255,255,255,0.95);
+            border: 2px solid #ccc;
+            min-width: 130px; z-index: 1000;
+        }
+        #ctx-menu .ctx-item {
+            padding: 7px 14px; font-size: 12px; color: #333; cursor: pointer;
+        }
+        #ctx-menu .ctx-item:hover { background: #f0edff; }
+        #ctx-menu .ctx-sep { height: 1px; background: #ddd; }
+    </style>
+</head>
+<body>
+    <div id="pet-area">
+        <div id="canvas-wrap"></div>
+        <div id="rec-dot">
+            <svg viewBox="0 0 24 24">
+                <circle class="pulse-ring" cx="12" cy="12" r="8" fill="#e44" opacity="0.3"/>
+                <circle cx="12" cy="12" r="5" fill="#e44"/>
+            </svg>
+        </div>
+        <div id="chat-bar">
+            <div id="chat-bar-inner">
+                <input id="chat-input" type="text" placeholder="跟喵喵说..." />
+                <button id="send-btn" onclick="sendChat()">发送</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="ctx-menu">
+        <div class="ctx-item" onclick="switchCat()">🔄 切换猫咪</div>
+        <div class="ctx-sep"></div>
+        <div class="ctx-item" onclick="doAction('bounce')">⬆ 蹦</div>
+        <div class="ctx-item" onclick="doAction('shake')">↔ 摇</div>
+        <div class="ctx-item" onclick="doAction('roll')">🔄 滚</div>
+        <div class="ctx-sep"></div>
+        <div class="ctx-item" id="ctx-top" onclick="window.openclaw.toggleTop()">📌 取消置顶</div>
+        <div class="ctx-item" id="ctx-shortcut" onclick="changeShortcut()">⌨ 语音快捷键</div>
+        <div class="ctx-item" onclick="window.openclaw.quit()">✕ 退出</div>
+    </div>
+
+    <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@6.5.10/dist/browser/pixi.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/cubism4.min.js"></script>
+
+    <script>
+    const { Live2DModel } = PIXI.live2d;
+    const DPR = window.devicePixelRatio || 1;
+    const CW = 400, CH = 420;
+
+    const CATS = [
+        { id: 'blue', name: '蓝粉猫团', path: '蓝粉猫团/蓝粉猫团/CAT102/CAT102.model3.json', watermark: 'Param12' },
+        { id: 'black', name: '黑白猫团', path: '黑白猫团/黑白猫团/CAT101/CAT101.model3.json', watermark: 'Param12' },
+    ];
+    let catIdx = 0, model = null, pixiApp = null;
+    let animating = false, isTop = true, chatBusy = false;
+    let bubbleContainer = null, bubbleTimer = null;
+    let expandBubble = null, lastFullText = '', chatBarTimer = null;
+
+    const meowAudio = new Audio('meow.mp3');
+    meowAudio.volume = 0.5;
+    function playMeow() { meowAudio.currentTime = 0; meowAudio.play().catch(() => {}); }
+
+    // ==================== 初始化 ====================
+    async function init() {
+        pixiApp = new PIXI.Application({
+            width: CW*DPR, height: CH*DPR, backgroundAlpha: 0, antialias: true,
+        });
+        pixiApp.view.style.width = CW+'px';
+        pixiApp.view.style.height = CH+'px';
+        document.getElementById('canvas-wrap').appendChild(pixiApp.view);
+        setupDrag(); setupContextMenu(); setupKeyboard();
+        setupChatBarVisibility(); setupStreamListeners(); setupVoice();
+        await loadCat(0);
+    }
+
+    // ==================== 模型 ====================
+    async function loadCat(idx) {
+        if (model) { pixiApp.stage.removeChild(model); model.destroy(); }
+        clearAllBubbles();
+        const cat = CATS[idx];
+        model = await Live2DModel.from(cat.path, { autoInteract: true });
+        const scale = Math.min((CW*DPR*0.7)/model.width, (CH*DPR*0.45)/model.height);
+        model.scale.set(scale);
+        model.x = (CW*DPR - model.width*scale) / 2;
+        model.y = (CH*DPR - model.height*scale) / 2 + 10*DPR;
+        if (cat.watermark) model.internalModel.coreModel.setParameterValueById(cat.watermark, 1);
+        model.interactive = true;
+        model.on('pointerdown', () => { if(!animating) bounceAction(); });
+        pixiApp.stage.addChild(model);
+        catIdx = idx;
+        updateRecDotPos();
+    }
+    function switchCat() { loadCat((catIdx+1)%CATS.length); hideCtxMenu(); }
+
+    // ==================== 录音小圆点位置 ====================
+    function updateRecDotPos() {
+        const dot = document.getElementById('rec-dot');
+        if (model) {
+            const catRight = (model.x + model.width * model.scale.x) / DPR;
+            const catTop = model.y / DPR;
+            dot.style.left = (catRight - 10) + 'px';
+            dot.style.top = (catTop + 5) + 'px';
+        }
+    }
+
+    // ==================== 输入框显隐 ====================
+    let mouseInside = false;
+    function setupChatBarVisibility() {
+        const area = document.getElementById('pet-area');
+        area.addEventListener('mouseenter', () => {
+            mouseInside = true;
+            clearTimeout(chatBarTimer);
+            document.getElementById('chat-bar').classList.add('show');
+        });
+        area.addEventListener('mouseleave', () => {
+            mouseInside = false;
+            scheduleChatBarHide(1000);
+        });
+    }
+    function scheduleChatBarHide(delay) {
+        clearTimeout(chatBarTimer);
+        chatBarTimer = setTimeout(() => {
+            // 只有输入框有焦点时才保持显示
+            if (document.activeElement === document.getElementById('chat-input')) return;
+            document.getElementById('chat-bar').classList.remove('show');
+        }, delay);
+    }
+
+    // ==================== 像素风气泡 ====================
+    function showBubble(text) {
+        clearAllBubbles(); lastFullText = text;
+        const isLong = text.length > 28 && text !== '···';
+        const displayText = isLong ? text.substring(0,26)+'..▸' : text;
+        bubbleContainer = createPixelBubble(displayText, 350);
+        if (isLong) {
+            bubbleContainer.interactive = true; bubbleContainer.cursor = 'pointer';
+            bubbleContainer.on('pointerdown', () => showExpandedBubble(lastFullText));
+        }
+        // 气泡水平居中于窗口，垂直在猫头顶
+        bubbleContainer.x = CW * DPR / 2;
+        if (model) {
+            bubbleContainer.y = model.y - 10*DPR;
+        }
+        bubbleContainer.scale.set(0); bubbleContainer.alpha = 0;
+        pixiApp.stage.addChild(bubbleContainer);
+        animateBubbleIn(bubbleContainer);
+        bubbleTimer = setTimeout(() => fadeBubble(bubbleContainer, ()=>{bubbleContainer=null;}), 8000);
+    }
+
+    function showExpandedBubble(text) {
+        clearExpandBubble();
+        expandBubble = new PIXI.Container();
+        const px=3*DPR, maxW=360*DPR;
+        const ts = new PIXI.TextStyle({ fontFamily:'"PingFang SC",sans-serif', fontSize:12*DPR, fill:'#333', wordWrap:true, wordWrapWidth:maxW-30*DPR, lineHeight:18*DPR });
+        const textObj = new PIXI.Text(text, ts);
+        const contentH = Math.min(textObj.height+20*DPR, 280*DPR);
+        const w = maxW;
+        const bg = new PIXI.Graphics();
+        bg.beginFill(0xffffff,0.97);
+        bg.drawRect(-w/2+px,0,w-px*2,contentH); bg.drawRect(-w/2,px,w,contentH-px*2);
+        bg.endFill();
+        bg.beginFill(0xcccccc);
+        bg.drawRect(-w/2+px,-px,w-px*2,px); bg.drawRect(-w/2+px,contentH,w-px*2,px);
+        bg.drawRect(-w/2-px,px,px,contentH-px*2); bg.drawRect(w/2,px,px,contentH-px*2);
+        bg.endFill();
+        const closeText = new PIXI.Text('点击关闭', new PIXI.TextStyle({fontFamily:'"PingFang SC"',fontSize:10*DPR,fill:'#999'}));
+        closeText.anchor.set(0.5,0); closeText.y=contentH+6*DPR;
+        textObj.x=-w/2+15*DPR; textObj.y=10*DPR;
+        const mask = new PIXI.Graphics(); mask.beginFill(0xffffff); mask.drawRect(-w/2+px,px,w-px*2,contentH-px*2); mask.endFill();
+        textObj.mask = mask;
+        expandBubble.addChild(bg); expandBubble.addChild(mask); expandBubble.addChild(textObj); expandBubble.addChild(closeText);
+        expandBubble.x=CW*DPR/2; expandBubble.y=20*DPR;
+        const overlay = new PIXI.Graphics(); overlay.beginFill(0x000000,0.2); overlay.drawRect(0,0,CW*DPR,CH*DPR); overlay.endFill();
+        overlay.interactive=true; overlay.on('pointerdown',()=>clearExpandBubble());
+        expandBubble._overlay=overlay;
+        expandBubble.interactive=true; expandBubble.on('pointerdown',()=>clearExpandBubble());
+        pixiApp.stage.addChild(overlay); pixiApp.stage.addChild(expandBubble);
+        expandBubble.scale.set(0.85); expandBubble.alpha=0;
+        animate(200, t=>{expandBubble.scale.set(0.85+t*0.15);expandBubble.alpha=t;});
+    }
+
+    function createPixelBubble(text, maxWidth) {
+        const c=new PIXI.Container(), px=3*DPR;
+        // 气泡最大宽度不超过窗口宽度 - 40px 边距
+        const maxW = Math.min(maxWidth * DPR, (CW - 40) * DPR);
+        const wrapW = maxW - 28 * DPR;
+        const ts=new PIXI.TextStyle({fontFamily:'"PingFang SC","SF Pro Rounded",sans-serif',fontSize:13*DPR,fontWeight:'500',fill:'#333',wordWrap:true,wordWrapWidth:wrapW,align:'center',lineHeight:19*DPR});
+        const t=new PIXI.Text(text,ts); t.anchor.set(0.5);
+        // 宽度用 wrapWidth + padding，不用 text.width（可能不准）
+        const w=Math.min(Math.max(t.width+28*DPR,60*DPR),maxW), h=t.height+18*DPR;
+        const g=new PIXI.Graphics();
+        // 白底
+        g.beginFill(0xffffff); g.drawRect(-w/2+px,-h/2,w-px*2,h); g.drawRect(-w/2,-h/2+px,w,h-px*2); g.endFill();
+        // 浅灰边框（和输入框统一）
+        g.beginFill(0xcccccc);
+        g.drawRect(-w/2+px,-h/2-px,w-px*2,px); g.drawRect(-w/2+px,h/2,w-px*2,px);
+        g.drawRect(-w/2-px,-h/2+px,px,h-px*2); g.drawRect(w/2,-h/2+px,px,h-px*2);
+        g.endFill();
+        // 尾巴
+        g.beginFill(0xffffff);
+        g.drawRect(-px,h/2,px*3,px);g.drawRect(0,h/2+px,px*2,px);g.drawRect(px,h/2+px*2,px,px);
+        g.endFill();
+        g.beginFill(0xcccccc);
+        g.drawRect(-px*2,h/2,px,px);g.drawRect(-px,h/2+px,px,px);g.drawRect(0,h/2+px*2,px,px);
+        g.drawRect(px,h/2+px*3,px,px);g.drawRect(px*2,h/2+px*2,px,px);g.drawRect(px*3,h/2+px,px,px);g.drawRect(px*4,h/2,px,px);
+        g.endFill();
+        c.addChild(g); c.addChild(t); return c;
+    }
+
+    function animateBubbleIn(target) {
+        animate(300,t=>{const e=t<0.6?(t/0.6)**2*1.15:1+(1-(t-0.6)/0.4)*0.15*Math.sin((t-0.6)*Math.PI/0.4);target.scale.set(Math.min(e,1.05));target.alpha=Math.min(t*4,1);});
+    }
+    function fadeBubble(target,cb){animate(250,t=>{target.alpha=1-t;target.scale.set(1-t*0.2);},()=>{if(target.parent)pixiApp.stage.removeChild(target);target.destroy({children:true});cb?.();});}
+    function clearAllBubbles(){
+        if(bubbleTimer){clearTimeout(bubbleTimer);bubbleTimer=null;}
+        // 清掉所有非模型的子元素（暴力但可靠）
+        const toRemove = [];
+        pixiApp.stage.children.forEach(c => { if(c !== model) toRemove.push(c); });
+        toRemove.forEach(c => { pixiApp.stage.removeChild(c); c.destroy({children:true}); });
+        bubbleContainer = null;
+        expandBubble = null;
+    }
+    function clearExpandBubble(){if(expandBubble){if(expandBubble._overlay?.parent)pixiApp.stage.removeChild(expandBubble._overlay);expandBubble._overlay?.destroy();if(expandBubble.parent)pixiApp.stage.removeChild(expandBubble);expandBubble.destroy({children:true});expandBubble=null;}}
+
+    // ==================== 对话 ====================
+    function setupStreamListeners() {
+        window.openclaw.onDone((text) => {
+            chatBusy = false;
+            document.getElementById('send-btn').classList.remove('loading');
+            document.getElementById('send-btn').textContent = '发送';
+            showBubble(text);
+            if (!animating) bounceAction();
+            if (text!=='···') playMeow();
+            if (!mouseInside) scheduleChatBarHide(1000);
+        });
+    }
+    async function sendChat() {
+        const input=document.getElementById('chat-input'), btn=document.getElementById('send-btn');
+        const text=input.value.trim(); if(!text||chatBusy) return;
+        input.value=''; chatBusy=true; btn.classList.add('loading'); btn.textContent='..';
+        showBubble('···');
+        window.openclaw.chatStream(text);
+    }
+    function setupKeyboard() {
+        document.getElementById('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}});
+        document.getElementById('chat-input').addEventListener('blur',()=>scheduleChatBarHide(2000));
+    }
+
+    // ==================== 语音输入 ====================
+    let mediaRecorder=null, audioChunks=[], isRecording=false;
+    function setupVoice() { window.openclaw.onVoiceToggle(()=>{isRecording?stopRecording():startRecording();}); }
+
+    async function startRecording() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+            mediaRecorder = new MediaRecorder(stream,{mimeType:'audio/webm'});
+            audioChunks=[];
+            mediaRecorder.ondataavailable=e=>{if(e.data.size>0)audioChunks.push(e.data);};
+            mediaRecorder.onstop = async()=>{
+                stream.getTracks().forEach(t=>t.stop());
+                document.getElementById('rec-dot').classList.remove('show');
+                isRecording=false;
+                showBubble('识别中...');
+                const blob=new Blob(audioChunks,{type:'audio/webm'});
+                const ab=await blob.arrayBuffer();
+                const ctx=new AudioContext({sampleRate:16000});
+                const buf=await ctx.decodeAudioData(ab);
+                const wav=audioBufferToWav(buf); ctx.close();
+                const b64=btoa(String.fromCharCode(...new Uint8Array(wav)));
+                const r=await window.openclaw.asrRecognize(b64);
+                if(r.text&&r.text.trim()){
+                    chatBusy=true;
+                    document.getElementById('send-btn').classList.add('loading');
+                    document.getElementById('send-btn').textContent='..';
+                    showBubble('···');
+                    window.openclaw.chatStream(r.text.trim());
+                } else { showBubble('没听清喵？再试~'); }
+            };
+            mediaRecorder.start(); isRecording=true;
+            updateRecDotPos();
+            document.getElementById('rec-dot').classList.add('show');
+        } catch { showBubble('无法访问麦克风 >_<'); }
+    }
+    function stopRecording(){if(mediaRecorder&&mediaRecorder.state==='recording')mediaRecorder.stop();}
+
+    function audioBufferToWav(buffer){
+        const s=buffer.getChannelData(0),buf=new ArrayBuffer(44+s.length*2),v=new DataView(buf);
+        function w(o,str){for(let i=0;i<str.length;i++)v.setUint8(o+i,str.charCodeAt(i));}
+        w(0,'RIFF');v.setUint32(4,36+s.length*2,true);w(8,'WAVE');w(12,'fmt ');
+        v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+        v.setUint32(24,buffer.sampleRate,true);v.setUint32(28,buffer.sampleRate*2,true);
+        v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,s.length*2,true);
+        let o=44;for(let i=0;i<s.length;i++,o+=2){const c=Math.max(-1,Math.min(1,s[i]));v.setInt16(o,c<0?c*0x8000:c*0x7FFF,true);}
+        return buf;
+    }
+
+    // ==================== 快捷键设置 ====================
+    async function changeShortcut(){
+        hideCtxMenu();
+        const cur=await window.openclaw.getShortcut();
+        const input=prompt(`当前语音快捷键: ${cur}\n输入新快捷键:`,cur);
+        if(input&&input.trim()){window.openclaw.updateShortcut(input.trim());showBubble('快捷键已更新喵~');}
+    }
+
+    // ==================== 右键菜单 ====================
+    function setupContextMenu(){
+        document.addEventListener('contextmenu',e=>{e.preventDefault();const m=document.getElementById('ctx-menu');m.style.display='block';m.style.left=Math.min(e.clientX,innerWidth-150)+'px';m.style.top=Math.min(e.clientY,innerHeight-220)+'px';document.getElementById('ctx-top').textContent=isTop?'📌 取消置顶':'📌 置顶';});
+        document.addEventListener('click',e=>{if(!e.target.closest('#ctx-menu'))hideCtxMenu();});
+        window.openclaw.onTopmostChanged(v=>{isTop=v;});
+    }
+    function hideCtxMenu(){document.getElementById('ctx-menu').style.display='none';}
+
+    // ==================== 拖拽 ====================
+    function setupDrag(){
+        const area=document.getElementById('pet-area');let d=false;
+        area.addEventListener('mousedown',e=>{if(e.button!==0||e.target.closest('#chat-bar'))return;d=true;window.openclaw.dragStart({x:e.screenX,y:e.screenY});});
+        window.addEventListener('mousemove',e=>{if(d)window.openclaw.dragMove({x:e.screenX,y:e.screenY});});
+        window.addEventListener('mouseup',()=>{if(d){d=false;window.openclaw.dragEnd();}});
+    }
+
+    // ==================== 动作 ====================
+    function animate(dur,onFrame,onDone){animating=true;const s=performance.now();(function f(now){const t=Math.min((now-s)/dur,1);onFrame(t);t<1?requestAnimationFrame(f):(onDone?.(),animating=false);})(s);}
+    function bounceAction(){if(!model)return;const oy=model.y,osx=model.scale.x,osy=model.scale.y;animate(500,t=>{const b=Math.abs(Math.sin(t*Math.PI*2.5))*(1-t);model.y=oy-b*40*DPR;const sq=1+Math.max(0,(1-b*3))*0.08*(1-t);model.scale.set(osx*sq,osy/sq);},()=>{model.y=oy;model.scale.set(osx,osy);});}
+    function shakeAction(){if(!model)return;const or=model.rotation;animate(400,t=>{model.rotation=or+Math.sin(t*Math.PI*6)*0.12*(1-t);},()=>{model.rotation=or;});}
+    function rollAction(){if(!model)return;const or=model.rotation;animate(700,t=>{const e=t<0.5?2*t*t:-1+(4-2*t)*t;model.rotation=or+e*Math.PI*2;},()=>{model.rotation=or;});}
+    function doAction(name){if(animating)return;hideCtxMenu();({bounce:bounceAction,shake:shakeAction,roll:rollAction})[name]();}
+
+    init();
+    </script>
+</body>
+</html>

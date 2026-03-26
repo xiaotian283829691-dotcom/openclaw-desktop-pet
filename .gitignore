@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.DS_Store
+# Live2D 素材（有授权限制，不上传）
+蓝粉猫团
+黑白猫团
+# 音效素材
+meow*.mp3

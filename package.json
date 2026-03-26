@@ -1,0 +1,16 @@
+{
+  "name": "openclaw-desktop-pet",
+  "version": "1.0.0",
+  "description": "OpenClaw 桌面宠物 - 猫团 Live2D",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^41.0.4"
+  }
+}
