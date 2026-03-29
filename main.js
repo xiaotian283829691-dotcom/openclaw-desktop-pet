@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, Menu } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const https = require('https');
@@ -7,15 +7,32 @@ const fs = require('fs');
 
 let win;
 let voiceShortcut = 'CommandOrControl+Q';
+const chatFocusShortcut = 'CommandOrControl+Shift+P';
+const posFile = path.join(app.getPath('userData'), 'window-pos.json');
+
+function loadWindowPos(defaultX, defaultY) {
+    try {
+        const data = JSON.parse(fs.readFileSync(posFile, 'utf8'));
+        if (typeof data.x === 'number' && typeof data.y === 'number') return data;
+    } catch {}
+    return { x: defaultX, y: defaultY };
+}
+
+function saveWindowPos() {
+    if (!win) return;
+    const [x, y] = win.getPosition();
+    try { fs.writeFileSync(posFile, JSON.stringify({ x, y })); } catch {}
+}
 
 function createWindow() {
     const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize;
+    const pos = loadWindowPos(Math.floor((screenW - 400) / 2), Math.floor((screenH - 420) / 2));
 
     win = new BrowserWindow({
         width: 400,
         height: 420,
-        x: screenW - 420,
-        y: screenH - 440,
+        x: pos.x,
+        y: pos.y,
         transparent: true,
         frame: false,
         alwaysOnTop: true,
@@ -31,12 +48,16 @@ function createWindow() {
     win.loadFile('index.html');
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
-    // 注册语音快捷键
+    // 注册快捷键
     registerVoiceShortcut(voiceShortcut);
+    registerChatFocusShortcut();
 }
 
 function registerVoiceShortcut(shortcut) {
-    globalShortcut.unregisterAll();
+    // 只注销语音快捷键，保留其他
+    if (voiceShortcut) {
+        try { globalShortcut.unregister(voiceShortcut); } catch {}
+    }
     try {
         globalShortcut.register(shortcut, () => {
             win.webContents.send('voice-toggle');
@@ -47,33 +68,148 @@ function registerVoiceShortcut(shortcut) {
     }
 }
 
+function registerChatFocusShortcut() {
+    try {
+        globalShortcut.register(chatFocusShortcut, () => {
+            win.show();
+            win.focus();
+            win.webContents.send('focus-chat');
+        });
+    } catch (e) {
+        console.error('聊天快捷键注册失败:', e.message);
+    }
+}
+
 // ===== OpenClaw 调用 =====
+let currentChild = null;
+
+function findOpenClaw() {
+    if (process.platform === 'win32') {
+        // Windows: 常见安装路径
+        const candidates = [
+            path.join(process.env.LOCALAPPDATA || '', 'Programs', 'openclaw', 'openclaw.exe'),
+            path.join(process.env.PROGRAMFILES || '', 'openclaw', 'openclaw.exe'),
+            path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Programs', 'openclaw', 'openclaw.exe'),
+            'openclaw.exe', // PATH 中
+            'openclaw',
+        ];
+        for (const p of candidates) {
+            if (p && p !== 'openclaw.exe' && p !== 'openclaw') {
+                try { if (fs.existsSync(p)) return p; } catch {}
+            }
+        }
+        // 尝试 where 命令找
+        try {
+            const result = require('child_process').execSync('where openclaw', { encoding: 'utf8', timeout: 5000 }).trim();
+            if (result) return result.split('\n')[0].trim();
+        } catch {}
+        return null;
+    } else {
+        // macOS / Linux
+        const candidates = [
+            '/opt/homebrew/bin/openclaw',
+            '/usr/local/bin/openclaw',
+            path.join(process.env.HOME || '', '.local', 'bin', 'openclaw'),
+        ];
+        for (const p of candidates) {
+            try { if (fs.existsSync(p)) return p; } catch {}
+        }
+        try {
+            const result = require('child_process').execSync('which openclaw', { encoding: 'utf8', timeout: 5000 }).trim();
+            if (result) return result;
+        } catch {}
+        return null;
+    }
+}
+
 ipcMain.handle('chat-stream', async (event, message) => {
     return new Promise((resolve) => {
-        const args = ['agent', '--agent', 'main', '-m', `用喵喵助手的身份回复：${message}`];
-        const child = spawn('/opt/homebrew/bin/openclaw', args, {
+        const openclawPath = findOpenClaw();
+        if (!openclawPath) {
+            const err = '喵...找不到 OpenClaw，请先安装 >_<';
+            win.webContents.send('chat-error', { type: 'not-installed', message: err });
+            return resolve(err);
+        }
+
+        const args = ['agent', '--agent', 'companion/neko-assistant', '-m', message];
+        const child = spawn(openclawPath, args, {
             timeout: 60000, env: { ...process.env },
+            shell: process.platform === 'win32',
         });
+        currentChild = child;
         let fullOutput = '';
-        child.stdout.on('data', (chunk) => { fullOutput += chunk.toString(); });
+        let lastSent = '';
+        let timedOut = false;
+
+        const timeoutId = setTimeout(() => {
+            timedOut = true;
+            child.kill();
+            const err = '喵...想太久超时了，再问一次？';
+            win.webContents.send('chat-error', { type: 'timeout', message: err });
+            resolve(err);
+        }, 60000);
+
+        child.stdout.on('data', (chunk) => {
+            fullOutput += chunk.toString();
+            const cleaned = cleanOutput(fullOutput);
+            if (cleaned.length > lastSent.length) {
+                const delta = cleaned.substring(lastSent.length);
+                lastSent = cleaned;
+                win.webContents.send('chat-chunk', delta);
+            }
+        });
         child.stderr.on('data', () => {});
-        child.on('close', () => {
+        child.on('close', (code) => {
+            clearTimeout(timeoutId);
+            currentChild = null;
+            if (timedOut) return;
+            if (code !== 0 && !fullOutput.trim()) {
+                const err = '喵...OpenClaw 好像没启动，检查一下 Gateway？';
+                win.webContents.send('chat-error', { type: 'gateway-down', message: err });
+                return resolve(err);
+            }
             const final = cleanOutput(fullOutput) || '喵~';
             win.webContents.send('chat-done', final);
             resolve(final);
         });
-        child.on('error', () => {
-            win.webContents.send('chat-done', '喵...连不上了 >_<');
-            resolve('喵...连不上了 >_<');
+        child.on('error', (e) => {
+            clearTimeout(timeoutId);
+            currentChild = null;
+            const err = '喵...连不上了 >_<';
+            win.webContents.send('chat-error', { type: 'network', message: err });
+            resolve(err);
         });
     });
 });
 
+// 取消当前对话
+ipcMain.on('chat-cancel', () => {
+    if (currentChild) {
+        currentChild.kill();
+        currentChild = null;
+    }
+});
+
 function cleanOutput(raw) {
-    const lines = raw.split('\n')
-        .filter(l => !l.match(/^\x1b?\[?\d*m?\[?(plugins|tools|agent|gateway)\b/) && l.trim())
+    // 1. 去除所有 ANSI 转义码
+    let text = raw.replace(/\x1b\[[0-9;]*m/g, '');
+    // 2. 按行过滤 OpenClaw 内部日志
+    const lines = text.split('\n')
+        .filter(l => {
+            const t = l.trim();
+            if (!t) return false;
+            if (/^\[?(plugins|tools|agent|gateway|skill|extension)\b/i.test(t)) return false;
+            if (/^(assistant|user)\s+to=/i.test(t)) return false;
+            if (/^\{"(file_path|function|tool)"/i.test(t)) return false;
+            return true;
+        })
         .join('\n').trim();
-    return lines.replace(/^.*?\*\*[^*]+\*\*[：:]\s*/s, '').trim();
+    // 3. 去除开头的角色标识（如 **喵喵助手**：）
+    let result = lines.replace(/^.*?\*\*[^*]+\*\*[：:]\s*/s, '').trim();
+    // 4. 去除末尾的乱码/残留（JSON片段、function call、非中英日常字符结尾）
+    result = result.replace(/[\]\}】。]*\s*(assistant|user)\s+to=.*$/si, '').trim();
+    result = result.replace(/\s*\{"\w+":.*$/s, '').trim();
+    return result;
 }
 
 // ===== 腾讯云 ASR =====
@@ -145,7 +281,21 @@ ipcMain.on('drag-move', (event, { x, y }) => {
         win.setPosition(win._dragOffset.wx + (x - win._dragOffset.x), win._dragOffset.wy + (y - win._dragOffset.y));
     }
 });
-ipcMain.on('drag-end', () => { win._dragOffset = null; });
+ipcMain.on('drag-end', () => {
+    win._dragOffset = null;
+    // 边缘吸附
+    const SNAP = 20;
+    const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize;
+    const [wx, wy] = win.getPosition();
+    const [ww, wh] = win.getSize();
+    let nx = wx, ny = wy;
+    if (wx < SNAP) nx = 0;
+    else if (wx + ww > screenW - SNAP) nx = screenW - ww;
+    if (wy < SNAP) ny = 0;
+    else if (wy + wh > screenH - SNAP) ny = screenH - wh;
+    if (nx !== wx || ny !== wy) win.setPosition(nx, ny);
+    saveWindowPos();
+});
 ipcMain.on('quit-app', () => app.quit());
 ipcMain.on('toggle-top', () => {
     const t = win.isAlwaysOnTop();
@@ -153,6 +303,66 @@ ipcMain.on('toggle-top', () => {
     win.webContents.send('topmost-changed', !t);
 });
 
-app.whenReady().then(createWindow);
+// ===== 原生右键菜单 =====
+ipcMain.on('show-context-menu', (event, options) => {
+    const template = [
+        { label: '切换猫咪', click: () => win.webContents.send('menu-action', 'switchCat') },
+        { type: 'separator' },
+        {
+            label: '动作',
+            submenu: [
+                { label: '蹦', click: () => win.webContents.send('menu-action', 'bounce') },
+                { label: '摇', click: () => win.webContents.send('menu-action', 'shake') },
+                { label: '翻滚', click: () => win.webContents.send('menu-action', 'roll') },
+                { label: '呼噜', click: () => win.webContents.send('menu-action', 'purr') },
+            ],
+        },
+        {
+            label: '计时器',
+            submenu: [
+                { label: '番茄钟 25 分钟', click: () => win.webContents.send('menu-action', 'timer25') },
+                { label: '休息 5 分钟', click: () => win.webContents.send('menu-action', 'timer5') },
+                { label: '自定义…', click: () => win.webContents.send('menu-action', 'timerCustom') },
+            ],
+        },
+        { type: 'separator' },
+        { label: '对话历史', click: () => win.webContents.send('menu-action', 'history') },
+        { label: options.isTop ? '取消置顶' : '置顶', click: () => win.webContents.send('menu-action', 'toggleTop') },
+        { label: '语音快捷键设置…', click: () => win.webContents.send('menu-action', 'shortcut') },
+        { type: 'separator' },
+        { label: '退出', accelerator: 'CmdOrCtrl+W', click: () => app.quit() },
+    ];
+    const menu = Menu.buildFromTemplate(template);
+    menu.popup({ window: win });
+});
+
+// ===== 自动安装喵喵助手 Agent =====
+function installNekoAgent() {
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    const agentDir = path.join(home, 'openclaw-workspace', 'agents', 'companion');
+    const agentFile = path.join(agentDir, 'neko-assistant.md');
+
+    // 已存在则跳过
+    if (fs.existsSync(agentFile)) return;
+
+    // 确保目录存在
+    try { fs.mkdirSync(agentDir, { recursive: true }); } catch {}
+
+    // 从应用内置资源复制
+    const bundled = path.join(__dirname, 'agents', 'neko-assistant.md');
+    if (fs.existsSync(bundled)) {
+        try {
+            fs.copyFileSync(bundled, agentFile);
+            console.log('喵喵助手 agent 已安装到:', agentFile);
+        } catch (e) {
+            console.error('安装喵喵助手失败:', e.message);
+        }
+    }
+}
+
+app.whenReady().then(() => {
+    installNekoAgent();
+    createWindow();
+});
 app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('window-all-closed', () => app.quit());

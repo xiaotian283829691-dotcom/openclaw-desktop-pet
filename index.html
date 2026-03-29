@@ -51,6 +51,10 @@
             font-family: "PingFang SC", sans-serif;
             outline: none;
             border-radius: 0;
+            resize: none;
+            line-height: 1.4;
+            max-height: 60px;
+            overflow-y: auto;
         }
         #chat-input::placeholder { color: #bbb; }
         #chat-input:focus { border-color: #b3a0e6; }
@@ -87,18 +91,124 @@
             transform-origin: center;
         }
 
-        /* 右键菜单 */
-        #ctx-menu {
-            display: none; position: fixed;
+        /* DOM 详细内容面板 */
+        #dom-bubble-overlay {
+            display: none;
+            position: absolute;
+            left: 6px; right: 6px; top: 6px;
+            bottom: 60px;
+            background: rgba(248,248,250,0.82);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 0.5px solid rgba(0,0,0,0.1);
+            border-radius: 10px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            z-index: 50;
+            opacity: 0;
+            transition: opacity 0.15s;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #dom-bubble-overlay.show {
+            display: flex;
+            opacity: 1;
+        }
+        .detail-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px 6px;
+            border-bottom: 0.5px solid rgba(0,0,0,0.06);
+            flex-shrink: 0;
+        }
+        .detail-title { font-size: 11px; font-weight: 600; color: #888; }
+        .detail-close {
+            width: 12px; height: 12px; border-radius: 50%;
+            background: #ff5f57; border: 0.5px solid rgba(0,0,0,0.08);
+            cursor: pointer;
+        }
+        .detail-close:hover { background: #ff3b30; }
+        #dom-bubble-text {
+            padding: 10px 12px 12px;
+            overflow-y: auto;
+            flex: 1;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #333;
+            font-family: "PingFang SC","SF Pro Text",system-ui,sans-serif;
+            user-select: text;
+            cursor: text;
+            word-break: break-word;
+        }
+        #dom-bubble-text::-webkit-scrollbar { width: 3px; }
+        #dom-bubble-text::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 2px; }
+
+        /* 对话历史面板 */
+        #history-panel {
+            display: none;
+            position: absolute;
+            left: 50%; top: 10px;
+            transform: translateX(-50%);
+            width: 360px;
+            max-height: 350px;
+            overflow-y: auto;
             background: rgba(255,255,255,0.95);
-            border: 2px solid #ccc;
-            min-width: 130px; z-index: 1000;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1.5px solid rgba(180,180,190,0.5);
+            border-radius: 14px;
+            padding: 12px 0;
+            z-index: 60;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.1);
         }
-        #ctx-menu .ctx-item {
-            padding: 7px 14px; font-size: 12px; color: #333; cursor: pointer;
+        #history-panel.show { display: block; }
+        #history-panel::-webkit-scrollbar { width: 4px; }
+        #history-panel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
+        .hist-title {
+            font-size: 12px; font-weight: 600; color: #7c3aed;
+            padding: 0 14px 8px; border-bottom: 1px solid #eee;
         }
-        #ctx-menu .ctx-item:hover { background: #f0edff; }
-        #ctx-menu .ctx-sep { height: 1px; background: #ddd; }
+        .hist-item {
+            padding: 8px 14px;
+            border-bottom: 1px solid #f5f5f5;
+            font-size: 11px; color: #333; line-height: 1.5;
+        }
+        .hist-item:last-child { border-bottom: none; }
+        .hist-item[data-idx]:hover { background: #f8f5ff; }
+        .hist-q { color: #7c3aed; font-weight: 500; }
+        .hist-a { color: #555; margin-top: 2px; }
+        .hist-time { color: #bbb; font-size: 10px; float: right; }
+        .hist-empty { text-align: center; color: #bbb; padding: 20px; font-size: 12px; }
+
+        /* 番茄钟浮层 */
+        #timer-display {
+            display: none;
+            position: absolute;
+            right: 8px; top: 8px;
+            background: rgba(124,58,237,0.9);
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: "SF Mono", "Menlo", monospace;
+            padding: 4px 10px;
+            border-radius: 8px;
+            z-index: 30;
+            cursor: pointer;
+        }
+        #timer-display.show { display: block; }
+
+        /* markdown 渲染样式 */
+        #dom-bubble-text h3, #dom-bubble-text h4 {
+            font-size: 12px; font-weight: 600; color: #7c3aed;
+            margin: 8px 0 4px;
+        }
+        #dom-bubble-text h3:first-child { margin-top: 0; }
+        #dom-bubble-text p { margin: 4px 0; }
+        #dom-bubble-text strong { font-weight: 600; color: #222; }
+        #dom-bubble-text ul, #dom-bubble-text ol {
+            margin: 4px 0; padding-left: 18px;
+        }
+        #dom-bubble-text li { margin: 2px 0; }
     </style>
 </head>
 <body>
@@ -110,25 +220,25 @@
                 <circle cx="12" cy="12" r="5" fill="#e44"/>
             </svg>
         </div>
+        <div id="dom-bubble-overlay">
+            <div class="detail-toolbar">
+                <div class="detail-close" onclick="hideDomOverlay()"></div>
+                <span class="detail-title">详细内容</span>
+                <span style="width:12px"></span>
+            </div>
+            <div id="dom-bubble-text"></div>
+        </div>
+        <div id="history-panel"></div>
+        <div id="timer-display" onclick="cancelTimer()" title="点击取消"></div>
         <div id="chat-bar">
             <div id="chat-bar-inner">
-                <input id="chat-input" type="text" placeholder="跟喵喵说..." />
+                <textarea id="chat-input" rows="1" placeholder="跟喵喵说..."></textarea>
                 <button id="send-btn" onclick="sendChat()">发送</button>
             </div>
         </div>
     </div>
 
-    <div id="ctx-menu">
-        <div class="ctx-item" onclick="switchCat()">🔄 切换猫咪</div>
-        <div class="ctx-sep"></div>
-        <div class="ctx-item" onclick="doAction('bounce')">⬆ 蹦</div>
-        <div class="ctx-item" onclick="doAction('shake')">↔ 摇</div>
-        <div class="ctx-item" onclick="doAction('roll')">🔄 滚</div>
-        <div class="ctx-sep"></div>
-        <div class="ctx-item" id="ctx-top" onclick="window.openclaw.toggleTop()">📌 取消置顶</div>
-        <div class="ctx-item" id="ctx-shortcut" onclick="changeShortcut()">⌨ 语音快捷键</div>
-        <div class="ctx-item" onclick="window.openclaw.quit()">✕ 退出</div>
-    </div>
+    <!-- 右键菜单改用 Electron 原生 Menu -->
 
     <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/pixi.js@6.5.10/dist/browser/pixi.min.js"></script>
@@ -146,11 +256,16 @@
     let catIdx = 0, model = null, pixiApp = null;
     let animating = false, isTop = true, chatBusy = false;
     let bubbleContainer = null, bubbleTimer = null;
-    let expandBubble = null, lastFullText = '', chatBarTimer = null;
+    let lastFullText = '', chatBarTimer = null;
+    let streamingText = ''; // 流式累积文本
 
     const meowAudio = new Audio('meow.mp3');
     meowAudio.volume = 0.5;
     function playMeow() { meowAudio.currentTime = 0; meowAudio.play().catch(() => {}); }
+
+    const purrAudio = new Audio('purr.mp3');
+    purrAudio.volume = 0.3;
+    function playPurr() { purrAudio.currentTime = 0; purrAudio.play().catch(() => {}); }
 
     // ==================== 初始化 ====================
     async function init() {
@@ -162,7 +277,11 @@
         document.getElementById('canvas-wrap').appendChild(pixiApp.view);
         setupDrag(); setupContextMenu(); setupKeyboard();
         setupChatBarVisibility(); setupStreamListeners(); setupVoice();
+        setupChatFocus(); setupErrorListeners();
         await loadCat(0);
+        startIdleBehavior();
+        showGreeting();
+        initMood();
     }
 
     // ==================== 模型 ====================
@@ -171,13 +290,14 @@
         clearAllBubbles();
         const cat = CATS[idx];
         model = await Live2DModel.from(cat.path, { autoInteract: true });
-        const scale = Math.min((CW*DPR*0.7)/model.width, (CH*DPR*0.45)/model.height);
+        const origW = model.width, origH = model.height;
+        const scale = Math.min((CW*DPR*0.7)/origW, (CH*DPR*0.45)/origH);
         model.scale.set(scale);
-        model.x = (CW*DPR - model.width*scale) / 2;
-        model.y = (CH*DPR - model.height*scale) / 2 + 10*DPR;
+        model.x = (CW*DPR - origW*scale) / 2;
+        model.y = (CH*DPR - origH*scale) / 2 + 10*DPR;
         if (cat.watermark) model.internalModel.coreModel.setParameterValueById(cat.watermark, 1);
         model.interactive = true;
-        model.on('pointerdown', () => { if(!animating) bounceAction(); });
+        model.on('pointerdown', () => { if(!animating) bounceAction(); recordInteraction(); });
         pixiApp.stage.addChild(model);
         catIdx = idx;
         updateRecDotPos();
@@ -199,96 +319,222 @@
     let mouseInside = false;
     function setupChatBarVisibility() {
         const area = document.getElementById('pet-area');
-        area.addEventListener('mouseenter', () => {
+        // 鼠标移动时显示，停止移动后自动隐藏
+        area.addEventListener('mousemove', () => {
             mouseInside = true;
             clearTimeout(chatBarTimer);
             document.getElementById('chat-bar').classList.add('show');
+            scheduleChatBarHide(2500);
         });
         area.addEventListener('mouseleave', () => {
             mouseInside = false;
-            scheduleChatBarHide(1000);
+            scheduleChatBarHide(500);
         });
     }
     function scheduleChatBarHide(delay) {
         clearTimeout(chatBarTimer);
         chatBarTimer = setTimeout(() => {
-            // 只有输入框有焦点时才保持显示
             if (document.activeElement === document.getElementById('chat-input')) return;
+            if (chatBusy) return; // 对话中不隐藏
+            mouseInside = false;
             document.getElementById('chat-bar').classList.remove('show');
         }, delay);
     }
 
+    // ==================== 等待状态 ====================
+    let waitTimers = [];
+    const WAIT_STAGES = [
+        { delay: 0, text: '想想' },
+        { delay: 3000, text: '想想...' },
+        { delay: 10000, text: '认真想...' },
+        { delay: 20000, text: '这个比较难喵...' },
+        { delay: 45000, text: '太难了...点击取消？', cancelable: true },
+    ];
+
+    function showWaitingBubble() {
+        clearWaitTimers();
+        showBubbleWithDots('想想');
+        WAIT_STAGES.forEach((stage, i) => {
+            if (i === 0) return;
+            const t = setTimeout(() => {
+                if (!chatBusy) return;
+                updateBubbleText(stage.text);
+            }, stage.delay);
+            waitTimers.push(t);
+        });
+    }
+
+    function clearWaitTimers() {
+        waitTimers.forEach(t => clearTimeout(t));
+        waitTimers = [];
+    }
+
+    function showBubbleWithDots(text) {
+        clearAllBubbles();
+        // 创建带跳动圆点的等待气泡
+        bubbleContainer = createWaitingBubble(text, 340);
+        bubbleContainer.x = CW * DPR / 2;
+        if (model) bubbleContainer.y = model.y - 10*DPR;
+        bubbleContainer.scale.set(0); bubbleContainer.alpha = 0;
+        pixiApp.stage.addChild(bubbleContainer);
+        animateBubbleIn(bubbleContainer);
+        // 等待气泡不自动消失
+    }
+
+    function createWaitingBubble(text, maxWidth) {
+        const c = new PIXI.Container(), px = 3*DPR;
+        const maxW = Math.min(maxWidth * DPR, (CW - 60) * DPR);
+        const wrapW = maxW - 28 * DPR;
+
+        // 文字部分
+        const ts = new PIXI.TextStyle({fontFamily:'"PingFang SC","SF Pro Rounded",sans-serif',fontSize:13*DPR,fontWeight:'500',fill:'#333',wordWrap:true,wordWrapWidth:wrapW,breakWords:true,align:'center',lineHeight:19*DPR});
+        const textObj = new PIXI.Text(text, ts);
+        textObj.anchor.set(0.5, 0.5);
+        textObj.name = 'waitText';
+
+        // 三个跳动圆点
+        const dotsContainer = new PIXI.Container();
+        dotsContainer.name = 'dots';
+        const dotR = 3 * DPR;
+        const dotGap = 10 * DPR;
+        for (let i = 0; i < 3; i++) {
+            const dot = new PIXI.Graphics();
+            dot.beginFill(0x7c3aed);
+            dot.drawCircle(0, 0, dotR);
+            dot.endFill();
+            dot.x = (i - 1) * dotGap;
+            dot.y = 0;
+            dot._baseY = 0;
+            dot._phase = i * 0.3;
+            dotsContainer.addChild(dot);
+        }
+
+        const w = maxW, h = Math.max(48*DPR, 56*DPR);
+        const g = new PIXI.Graphics();
+        g.beginFill(0xffffff); g.drawRect(-w/2+px,-h/2,w-px*2,h); g.drawRect(-w/2,-h/2+px,w,h-px*2); g.endFill();
+        g.beginFill(0xcccccc);
+        g.drawRect(-w/2+px,-h/2-px,w-px*2,px); g.drawRect(-w/2+px,h/2,w-px*2,px);
+        g.drawRect(-w/2-px,-h/2+px,px,h-px*2); g.drawRect(w/2,-h/2+px,px,h-px*2);
+        g.endFill();
+        // 尾巴
+        g.beginFill(0xffffff);
+        g.drawRect(-px,h/2,px*3,px);g.drawRect(0,h/2+px,px*2,px);g.drawRect(px,h/2+px*2,px,px);
+        g.endFill();
+        g.beginFill(0xcccccc);
+        g.drawRect(-px*2,h/2,px,px);g.drawRect(-px,h/2+px,px,px);g.drawRect(0,h/2+px*2,px,px);
+        g.drawRect(px,h/2+px*3,px,px);g.drawRect(px*2,h/2+px*2,px,px);g.drawRect(px*3,h/2+px,px,px);g.drawRect(px*4,h/2,px,px);
+        g.endFill();
+
+        textObj.x = -20 * DPR;
+        dotsContainer.x = textObj.x + textObj.width/2 + 16*DPR;
+
+        c.addChild(g); c.addChild(textObj); c.addChild(dotsContainer);
+
+        // 圆点跳动动画（用 ticker 驱动）
+        const ticker = (delta) => {
+            const time = performance.now() / 1000;
+            dotsContainer.children.forEach(dot => {
+                dot.y = dot._baseY + Math.sin((time + dot._phase) * 4) * 4 * DPR;
+            });
+        };
+        pixiApp.ticker.add(ticker);
+        c._dotTicker = ticker;
+
+        return c;
+    }
+
+    function updateBubbleText(newText) {
+        if (!bubbleContainer) return;
+        const textObj = bubbleContainer.children.find(c => c.name === 'waitText');
+        if (textObj) textObj.text = newText;
+    }
+
     // ==================== 像素风气泡 ====================
     function showBubble(text) {
-        clearAllBubbles(); lastFullText = text;
-        const isLong = text.length > 28 && text !== '···';
-        const displayText = isLong ? text.substring(0,26)+'..▸' : text;
-        bubbleContainer = createPixelBubble(displayText, 350);
+        clearAllBubbles(); hideDomOverlay(); lastFullText = text;
+        const maxChars = 54;
+        const isLong = text.length > maxChars;
+        const displayText = isLong ? text.substring(0, maxChars-2)+'..▸' : text;
+        bubbleContainer = createPixelBubble(displayText, 340);
         if (isLong) {
             bubbleContainer.interactive = true; bubbleContainer.cursor = 'pointer';
-            bubbleContainer.on('pointerdown', () => showExpandedBubble(lastFullText));
+            bubbleContainer.on('pointertap', () => showDomOverlay(lastFullText));
+            bubbleContainer.on('pointerover', () => { bubbleContainer.cursor = 'pointer'; });
         }
-        // 气泡水平居中于窗口，垂直在猫头顶
         bubbleContainer.x = CW * DPR / 2;
-        if (model) {
-            bubbleContainer.y = model.y - 10*DPR;
-        }
+        if (model) bubbleContainer.y = model.y - 10*DPR;
         bubbleContainer.scale.set(0); bubbleContainer.alpha = 0;
         pixiApp.stage.addChild(bubbleContainer);
         animateBubbleIn(bubbleContainer);
         bubbleTimer = setTimeout(() => fadeBubble(bubbleContainer, ()=>{bubbleContainer=null;}), 8000);
     }
 
-    function showExpandedBubble(text) {
-        clearExpandBubble();
-        expandBubble = new PIXI.Container();
-        const px=3*DPR, maxW=360*DPR;
-        const ts = new PIXI.TextStyle({ fontFamily:'"PingFang SC",sans-serif', fontSize:12*DPR, fill:'#333', wordWrap:true, wordWrapWidth:maxW-30*DPR, lineHeight:18*DPR });
-        const textObj = new PIXI.Text(text, ts);
-        const contentH = Math.min(textObj.height+20*DPR, 280*DPR);
-        const w = maxW;
-        const bg = new PIXI.Graphics();
-        bg.beginFill(0xffffff,0.97);
-        bg.drawRect(-w/2+px,0,w-px*2,contentH); bg.drawRect(-w/2,px,w,contentH-px*2);
-        bg.endFill();
-        bg.beginFill(0xcccccc);
-        bg.drawRect(-w/2+px,-px,w-px*2,px); bg.drawRect(-w/2+px,contentH,w-px*2,px);
-        bg.drawRect(-w/2-px,px,px,contentH-px*2); bg.drawRect(w/2,px,px,contentH-px*2);
-        bg.endFill();
-        const closeText = new PIXI.Text('点击关闭', new PIXI.TextStyle({fontFamily:'"PingFang SC"',fontSize:10*DPR,fill:'#999'}));
-        closeText.anchor.set(0.5,0); closeText.y=contentH+6*DPR;
-        textObj.x=-w/2+15*DPR; textObj.y=10*DPR;
-        const mask = new PIXI.Graphics(); mask.beginFill(0xffffff); mask.drawRect(-w/2+px,px,w-px*2,contentH-px*2); mask.endFill();
-        textObj.mask = mask;
-        expandBubble.addChild(bg); expandBubble.addChild(mask); expandBubble.addChild(textObj); expandBubble.addChild(closeText);
-        expandBubble.x=CW*DPR/2; expandBubble.y=20*DPR;
-        const overlay = new PIXI.Graphics(); overlay.beginFill(0x000000,0.2); overlay.drawRect(0,0,CW*DPR,CH*DPR); overlay.endFill();
-        overlay.interactive=true; overlay.on('pointerdown',()=>clearExpandBubble());
-        expandBubble._overlay=overlay;
-        expandBubble.interactive=true; expandBubble.on('pointerdown',()=>clearExpandBubble());
-        pixiApp.stage.addChild(overlay); pixiApp.stage.addChild(expandBubble);
-        expandBubble.scale.set(0.85); expandBubble.alpha=0;
-        animate(200, t=>{expandBubble.scale.set(0.85+t*0.15);expandBubble.alpha=t;});
+    // ==================== DOM 长文本浮层 ====================
+    function showDomOverlay(text) {
+        // 隐藏像素气泡
+        if (bubbleContainer && bubbleContainer.parent) {
+            bubbleContainer.visible = false;
+        }
+        if (bubbleTimer) { clearTimeout(bubbleTimer); bubbleTimer = null; }
+        document.getElementById('dom-bubble-text').innerHTML = renderMarkdown(text);
+        document.getElementById('dom-bubble-overlay').classList.add('show');
+    }
+
+    function renderMarkdown(text) {
+        let html = escHtml(text);
+        html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/^[-–] (.+)$/gm, '<li>$1</li>');
+        html = html.replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
+        html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+        html = html.split('\n\n').map(p => {
+            p = p.trim();
+            if (!p || p.startsWith('<h') || p.startsWith('<ul')) return p;
+            return '<p>' + p + '</p>';
+        }).join('');
+        html = html.replace(/([^>])\n([^<])/g, '$1<br>$2');
+        return html;
+    }
+    function hideDomOverlay() {
+        document.getElementById('dom-bubble-overlay').classList.remove('show');
+    }
+
+    // ==================== 流式气泡更新 ====================
+    function showStreamingBubble(text) {
+        lastFullText = text;
+        const maxChars = 54;
+        const displayText = text.length > maxChars ? text.substring(text.length - maxChars) : text;
+
+        if (!bubbleContainer || bubbleContainer._isWaiting) {
+            // 从等待气泡切换到内容气泡
+            clearAllBubbles();
+            bubbleContainer = createPixelBubble(displayText, 340);
+            bubbleContainer._isStreaming = true;
+            bubbleContainer.x = CW * DPR / 2;
+            if (model) bubbleContainer.y = model.y - 10*DPR;
+            pixiApp.stage.addChild(bubbleContainer);
+            bubbleContainer.scale.set(1); bubbleContainer.alpha = 1;
+        } else {
+            // 更新已有气泡的文字
+            const textChild = bubbleContainer.children.find(c => c instanceof PIXI.Text);
+            if (textChild) textChild.text = displayText;
+        }
     }
 
     function createPixelBubble(text, maxWidth) {
         const c=new PIXI.Container(), px=3*DPR;
-        // 气泡最大宽度不超过窗口宽度 - 40px 边距
-        const maxW = Math.min(maxWidth * DPR, (CW - 40) * DPR);
+        const maxW = Math.min(maxWidth * DPR, (CW - 60) * DPR);
         const wrapW = maxW - 28 * DPR;
-        const ts=new PIXI.TextStyle({fontFamily:'"PingFang SC","SF Pro Rounded",sans-serif',fontSize:13*DPR,fontWeight:'500',fill:'#333',wordWrap:true,wordWrapWidth:wrapW,align:'center',lineHeight:19*DPR});
+        const ts=new PIXI.TextStyle({fontFamily:'"PingFang SC","SF Pro Rounded",sans-serif',fontSize:13*DPR,fontWeight:'500',fill:'#333',wordWrap:true,wordWrapWidth:wrapW,breakWords:true,align:'center',lineHeight:19*DPR});
         const t=new PIXI.Text(text,ts); t.anchor.set(0.5);
-        // 宽度用 wrapWidth + padding，不用 text.width（可能不准）
-        const w=Math.min(Math.max(t.width+28*DPR,60*DPR),maxW), h=t.height+18*DPR;
+        const w=maxW, h=Math.max(t.height+18*DPR, 48*DPR);
         const g=new PIXI.Graphics();
-        // 白底
         g.beginFill(0xffffff); g.drawRect(-w/2+px,-h/2,w-px*2,h); g.drawRect(-w/2,-h/2+px,w,h-px*2); g.endFill();
-        // 浅灰边框（和输入框统一）
         g.beginFill(0xcccccc);
         g.drawRect(-w/2+px,-h/2-px,w-px*2,px); g.drawRect(-w/2+px,h/2,w-px*2,px);
         g.drawRect(-w/2-px,-h/2+px,px,h-px*2); g.drawRect(w/2,-h/2+px,px,h-px*2);
         g.endFill();
-        // 尾巴
         g.beginFill(0xffffff);
         g.drawRect(-px,h/2,px*3,px);g.drawRect(0,h/2+px,px*2,px);g.drawRect(px,h/2+px*2,px,px);
         g.endFill();
@@ -305,42 +551,269 @@
     function fadeBubble(target,cb){animate(250,t=>{target.alpha=1-t;target.scale.set(1-t*0.2);},()=>{if(target.parent)pixiApp.stage.removeChild(target);target.destroy({children:true});cb?.();});}
     function clearAllBubbles(){
         if(bubbleTimer){clearTimeout(bubbleTimer);bubbleTimer=null;}
-        // 清掉所有非模型的子元素（暴力但可靠）
+        clearWaitTimers();
         const toRemove = [];
-        pixiApp.stage.children.forEach(c => { if(c !== model) toRemove.push(c); });
+        pixiApp.stage.children.forEach(c => {
+            if(c !== model) {
+                if (c._dotTicker) pixiApp.ticker.remove(c._dotTicker);
+                toRemove.push(c);
+            }
+        });
         toRemove.forEach(c => { pixiApp.stage.removeChild(c); c.destroy({children:true}); });
         bubbleContainer = null;
-        expandBubble = null;
     }
-    function clearExpandBubble(){if(expandBubble){if(expandBubble._overlay?.parent)pixiApp.stage.removeChild(expandBubble._overlay);expandBubble._overlay?.destroy();if(expandBubble.parent)pixiApp.stage.removeChild(expandBubble);expandBubble.destroy({children:true});expandBubble=null;}}
 
     // ==================== 对话 ====================
     function setupStreamListeners() {
+        // 流式 chunk 到达
+        window.openclaw.onChunk((delta) => {
+            streamingText += delta;
+            showStreamingBubble(streamingText);
+        });
+        // 完整响应完成
         window.openclaw.onDone((text) => {
             chatBusy = false;
+            clearWaitTimers();
+            streamingText = '';
+            lastFailedMessage = '';
             document.getElementById('send-btn').classList.remove('loading');
             document.getElementById('send-btn').textContent = '发送';
             showBubble(text);
             if (!animating) bounceAction();
-            if (text!=='···') playMeow();
+            if (text!=='喵~') playMeow();
             if (!mouseInside) scheduleChatBarHide(1000);
+            recordInteraction();
+            changeMood(5); // 成功回复心情+5
+            if (pendingQuestion) { addHistory(pendingQuestion, text); pendingQuestion = ''; }
         });
     }
+    let pendingQuestion = '';
     async function sendChat() {
         const input=document.getElementById('chat-input'), btn=document.getElementById('send-btn');
         const text=input.value.trim(); if(!text||chatBusy) return;
-        input.value=''; chatBusy=true; btn.classList.add('loading'); btn.textContent='..';
-        showBubble('···');
+        input.value=''; input.style.height = 'auto';
+        chatBusy=true; btn.classList.add('loading'); btn.textContent='..';
+        streamingText = '';
+        pendingQuestion = text;
+        lastFailedMessage = text;
+        showWaitingBubble();
         window.openclaw.chatStream(text);
+        recordInteraction();
+        changeMood(3); // 每次对话心情+3
     }
     function setupKeyboard() {
-        document.getElementById('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}});
-        document.getElementById('chat-input').addEventListener('blur',()=>scheduleChatBarHide(2000));
+        const input = document.getElementById('chat-input');
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendChat();
+            }
+            // Shift+Enter 换行，textarea 原生支持
+        });
+        // 自动调整高度
+        input.addEventListener('input', () => {
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 60) + 'px';
+        });
+        input.addEventListener('blur', () => scheduleChatBarHide(2000));
+    }
+
+    // ==================== 全局快捷键聚焦 ====================
+    function setupChatFocus() {
+        window.openclaw.onFocusChat(() => {
+            const bar = document.getElementById('chat-bar');
+            bar.classList.add('show');
+            const input = document.getElementById('chat-input');
+            input.focus();
+        });
+    }
+
+    // ==================== 错误处理 ====================
+    let lastFailedMessage = '';
+    function setupErrorListeners() {
+        window.openclaw.onError((err) => {
+            chatBusy = false;
+            clearWaitTimers();
+            streamingText = '';
+            document.getElementById('send-btn').classList.remove('loading');
+            document.getElementById('send-btn').textContent = '发送';
+            showErrorBubble(err.message, err.type);
+        });
+    }
+
+    function showErrorBubble(text, type) {
+        clearAllBubbles(); hideDomOverlay();
+        // 用红色调的像素气泡
+        bubbleContainer = createPixelBubble(text + ' [重试]', 340);
+        bubbleContainer.x = CW * DPR / 2;
+        if (model) bubbleContainer.y = model.y - 10*DPR;
+        // 点击重试
+        bubbleContainer.interactive = true;
+        bubbleContainer.cursor = 'pointer';
+        bubbleContainer.on('pointertap', () => {
+            if (lastFailedMessage) {
+                const msg = lastFailedMessage;
+                lastFailedMessage = '';
+                chatBusy = true;
+                streamingText = '';
+                document.getElementById('send-btn').classList.add('loading');
+                document.getElementById('send-btn').textContent = '..';
+                showWaitingBubble();
+                window.openclaw.chatStream(msg);
+            }
+        });
+        bubbleContainer.scale.set(0); bubbleContainer.alpha = 0;
+        pixiApp.stage.addChild(bubbleContainer);
+        animateBubbleIn(bubbleContainer);
+        // 错误气泡不自动消失
+    }
+
+    // ==================== 对话历史 ====================
+    const chatHistory = [];
+    const MAX_HISTORY = 20;
+
+    function addHistory(question, answer) {
+        chatHistory.unshift({
+            q: question,
+            a: answer,
+            time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+        });
+        if (chatHistory.length > MAX_HISTORY) chatHistory.pop();
+        try { localStorage.setItem('pet_chat_history', JSON.stringify(chatHistory)); } catch {}
+    }
+
+    function loadHistory() {
+        try {
+            const saved = JSON.parse(localStorage.getItem('pet_chat_history') || '[]');
+            chatHistory.push(...saved.slice(0, MAX_HISTORY));
+        } catch {}
+    }
+    loadHistory();
+
+    let historyCloseHandler = null;
+    function toggleHistoryPanel() {
+        hideCtxMenu();
+        const panel = document.getElementById('history-panel');
+        if (panel.classList.contains('show')) {
+            closeHistoryPanel();
+            return;
+        }
+        if (chatHistory.length === 0) {
+            panel.innerHTML = '<div class="hist-title">对话历史</div><div class="hist-empty">还没有对话记录喵~</div>';
+        } else {
+            let html = '<div class="hist-title">对话历史</div>';
+            chatHistory.forEach((h, i) => {
+                html += `<div class="hist-item" data-idx="${i}" style="cursor:pointer"><span class="hist-time">${h.time}</span><div class="hist-q">🗣 ${escHtml(h.q)}</div><div class="hist-a">🐱 ${escHtml(h.a.substring(0, 60))}${h.a.length > 60 ? '...' : ''}</div></div>`;
+            });
+            panel.innerHTML = html;
+            // 点击记录弹出详细弹窗
+            panel.querySelectorAll('.hist-item[data-idx]').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const idx = parseInt(el.dataset.idx);
+                    const h = chatHistory[idx];
+                    if (h) {
+                        closeHistoryPanel();
+                        showDomOverlay('🗣 ' + h.q + '\n\n🐱 ' + h.a);
+                    }
+                });
+            });
+        }
+        panel.classList.add('show');
+        // 点击外部关闭
+        setTimeout(() => {
+            historyCloseHandler = (e) => {
+                if (!panel.contains(e.target)) closeHistoryPanel();
+                else document.addEventListener('click', historyCloseHandler, { once: true });
+            };
+            document.addEventListener('click', historyCloseHandler, { once: true });
+        }, 50);
+    }
+
+    function closeHistoryPanel() {
+        document.getElementById('history-panel').classList.remove('show');
+        if (historyCloseHandler) {
+            document.removeEventListener('click', historyCloseHandler);
+            historyCloseHandler = null;
+        }
+    }
+
+    function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ==================== 番茄钟/提醒 ====================
+    let timerInterval = null;
+    let timerEnd = 0;
+
+    function startTimer(minutes) {
+        hideCtxMenu();
+        cancelTimer();
+        timerEnd = Date.now() + minutes * 60 * 1000;
+        const display = document.getElementById('timer-display');
+        display.classList.add('show');
+        showBubble(`开始${minutes}分钟计时喵！`);
+        playMeow();
+
+        timerInterval = setInterval(() => {
+            const remain = Math.max(0, timerEnd - Date.now());
+            const m = Math.floor(remain / 60000);
+            const s = Math.floor((remain % 60000) / 1000);
+            display.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+
+            if (remain <= 0) {
+                cancelTimer();
+                // 时间到！
+                showBubble('时间到啦！休息一下喵~');
+                if (!animating) bounceAction();
+                playMeow();
+                // 连叫三声
+                setTimeout(playMeow, 600);
+                setTimeout(playMeow, 1200);
+            }
+        }, 1000);
+    }
+
+    function cancelTimer() {
+        if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+        }
+        document.getElementById('timer-display').classList.remove('show');
+    }
+
+    function promptCustomTimer() {
+        hideCtxMenu();
+        const input = prompt('倒计时几分钟？', '10');
+        const mins = parseInt(input);
+        if (mins > 0) startTimer(mins);
+    }
+
+    // ==================== 情绪系统 ====================
+    let mood = 50; // 0-100，50=普通，100=开心
+    const MOOD_KEY = 'pet_mood';
+
+    function initMood() {
+        try { mood = parseInt(localStorage.getItem(MOOD_KEY)) || 50; } catch {}
+    }
+
+    function changeMood(delta) {
+        mood = Math.max(0, Math.min(100, mood + delta));
+        try { localStorage.setItem(MOOD_KEY, String(mood)); } catch {}
+    }
+
+    function getMoodState() {
+        if (mood >= 80) return 'happy';
+        if (mood >= 40) return 'normal';
+        return 'lonely';
     }
 
     // ==================== 语音输入 ====================
     let mediaRecorder=null, audioChunks=[], isRecording=false;
-    function setupVoice() { window.openclaw.onVoiceToggle(()=>{isRecording?stopRecording():startRecording();}); }
+    function setupVoice() { window.openclaw.onVoiceToggle(()=>toggleVoice()); }
+
+    function toggleVoice() {
+        if (chatBusy) return;
+        isRecording ? stopRecording() : startRecording();
+    }
 
     async function startRecording() {
         try {
@@ -352,28 +825,83 @@
                 stream.getTracks().forEach(t=>t.stop());
                 document.getElementById('rec-dot').classList.remove('show');
                 isRecording=false;
-                showBubble('识别中...');
-                const blob=new Blob(audioChunks,{type:'audio/webm'});
-                const ab=await blob.arrayBuffer();
-                const ctx=new AudioContext({sampleRate:16000});
-                const buf=await ctx.decodeAudioData(ab);
-                const wav=audioBufferToWav(buf); ctx.close();
-                const b64=btoa(String.fromCharCode(...new Uint8Array(wav)));
-                const r=await window.openclaw.asrRecognize(b64);
-                if(r.text&&r.text.trim()){
-                    chatBusy=true;
-                    document.getElementById('send-btn').classList.add('loading');
-                    document.getElementById('send-btn').textContent='..';
-                    showBubble('···');
-                    window.openclaw.chatStream(r.text.trim());
-                } else { showBubble('没听清喵？再试~'); }
+
+                // 立刻进入等待状态（和文本输入一致）
+                chatBusy=true;
+                streamingText='';
+                document.getElementById('send-btn').classList.add('loading');
+                document.getElementById('send-btn').textContent='..';
+                showWaitingBubble();
+                updateBubbleText('识别语音中...');
+
+                try {
+                    const blob=new Blob(audioChunks,{type:'audio/webm'});
+                    const ab=await blob.arrayBuffer();
+                    // 解码 + 重采样到 16kHz
+                    let ctx;
+                    let buf16k;
+                    try {
+                        ctx = new AudioContext();
+                        const decoded = await ctx.decodeAudioData(ab.slice(0)); // slice 避免 detach
+                        if (decoded.sampleRate !== 16000) {
+                            const samples = Math.ceil(decoded.duration * 16000);
+                            const offCtx = new OfflineAudioContext(1, samples, 16000);
+                            const src = offCtx.createBufferSource();
+                            src.buffer = decoded;
+                            src.connect(offCtx.destination);
+                            src.start();
+                            buf16k = await offCtx.startRendering();
+                        } else {
+                            buf16k = decoded;
+                        }
+                    } finally {
+                        if (ctx) ctx.close().catch(()=>{});
+                    }
+                    const wav=audioBufferToWav(buf16k);
+                    const b64=uint8ToBase64(new Uint8Array(wav));
+                    const r=await window.openclaw.asrRecognize(b64);
+
+                    if(r.text&&r.text.trim()){
+                        pendingQuestion=r.text.trim();
+                        lastFailedMessage=r.text.trim();
+                        updateBubbleText('想想');
+                        window.openclaw.chatStream(r.text.trim());
+                        recordInteraction();
+                        changeMood(3);
+                    } else {
+                        chatBusy=false;
+                        clearWaitTimers();
+                        document.getElementById('send-btn').classList.remove('loading');
+                        document.getElementById('send-btn').textContent='发送';
+                        showBubble(r.error ? '语音识别出错了 >_<' : '没听清喵？再试~');
+                    }
+                } catch(e) {
+                    console.error('语音处理错误:', e);
+                    chatBusy=false;
+                    clearWaitTimers();
+                    document.getElementById('send-btn').classList.remove('loading');
+                    document.getElementById('send-btn').textContent='发送';
+                    showBubble('语音出错: ' + (e.message || e).toString().substring(0, 60));
+                }
             };
             mediaRecorder.start(); isRecording=true;
             updateRecDotPos();
             document.getElementById('rec-dot').classList.add('show');
-        } catch { showBubble('无法访问麦克风 >_<'); }
+        } catch(e) {
+            console.error('麦克风错误:', e);
+            showBubble('无法访问麦克风 >_<');
+        }
     }
     function stopRecording(){if(mediaRecorder&&mediaRecorder.state==='recording')mediaRecorder.stop();}
+
+    function uint8ToBase64(bytes) {
+        let str = '';
+        const chunk = 8192;
+        for (let i = 0; i < bytes.length; i += chunk) {
+            str += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return btoa(str);
+    }
 
     function audioBufferToWav(buffer){
         const s=buffer.getChannelData(0),buf=new ArrayBuffer(44+s.length*2),v=new DataView(buf);
@@ -394,13 +922,31 @@
         if(input&&input.trim()){window.openclaw.updateShortcut(input.trim());showBubble('快捷键已更新喵~');}
     }
 
-    // ==================== 右键菜单 ====================
+    // ==================== 右键菜单（原生） ====================
     function setupContextMenu(){
-        document.addEventListener('contextmenu',e=>{e.preventDefault();const m=document.getElementById('ctx-menu');m.style.display='block';m.style.left=Math.min(e.clientX,innerWidth-150)+'px';m.style.top=Math.min(e.clientY,innerHeight-220)+'px';document.getElementById('ctx-top').textContent=isTop?'📌 取消置顶':'📌 置顶';});
-        document.addEventListener('click',e=>{if(!e.target.closest('#ctx-menu'))hideCtxMenu();});
-        window.openclaw.onTopmostChanged(v=>{isTop=v;});
+        document.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            window.openclaw.showContextMenu({ isTop });
+        });
+        window.openclaw.onTopmostChanged(v => { isTop = v; });
+        window.openclaw.onMenuAction(action => {
+            const actions = {
+                switchCat: () => switchCat(),
+                bounce: () => doAction('bounce'),
+                shake: () => doAction('shake'),
+                roll: () => doAction('roll'),
+                purr: () => doAction('purr'),
+                timer25: () => startTimer(25),
+                timer5: () => startTimer(5),
+                timerCustom: () => promptCustomTimer(),
+                history: () => toggleHistoryPanel(),
+                toggleTop: () => window.openclaw.toggleTop(),
+                shortcut: () => changeShortcut(),
+            };
+            if (actions[action]) actions[action]();
+        });
     }
-    function hideCtxMenu(){document.getElementById('ctx-menu').style.display='none';}
+    function hideCtxMenu(){} // 兼容旧调用
 
     // ==================== 拖拽 ====================
     function setupDrag(){
@@ -415,7 +961,226 @@
     function bounceAction(){if(!model)return;const oy=model.y,osx=model.scale.x,osy=model.scale.y;animate(500,t=>{const b=Math.abs(Math.sin(t*Math.PI*2.5))*(1-t);model.y=oy-b*40*DPR;const sq=1+Math.max(0,(1-b*3))*0.08*(1-t);model.scale.set(osx*sq,osy/sq);},()=>{model.y=oy;model.scale.set(osx,osy);});}
     function shakeAction(){if(!model)return;const or=model.rotation;animate(400,t=>{model.rotation=or+Math.sin(t*Math.PI*6)*0.12*(1-t);},()=>{model.rotation=or;});}
     function rollAction(){if(!model)return;const or=model.rotation;animate(700,t=>{const e=t<0.5?2*t*t:-1+(4-2*t)*t;model.rotation=or+e*Math.PI*2;},()=>{model.rotation=or;});}
-    function doAction(name){if(animating)return;hideCtxMenu();({bounce:bounceAction,shake:shakeAction,roll:rollAction})[name]();}
+    function doAction(name){if(animating)return;hideCtxMenu();({bounce:bounceAction,shake:shakeAction,roll:rollAction,purr:purrAction})[name]();}
+
+    // ==================== Phase 2.1：闲置行为状态机 ====================
+    let idleTimer = null;
+    let lastIdleAction = '';
+    let lastInteractionTime = Date.now();
+
+    function recordInteraction() { lastInteractionTime = Date.now(); }
+
+    const IDLE_ACTIONS = [
+        { name: 'breathe', weight: 30, action: breatheAction },
+        { name: 'purr', weight: 30, action: purrAction },
+        { name: 'lookAround', weight: 25, action: lookAroundAction },
+        { name: 'yawn', weight: 15, action: yawnAction },
+    ];
+
+    function getTimeAdjustedWeights() {
+        const hour = new Date().getHours();
+        const weights = IDLE_ACTIONS.map(a => ({ ...a }));
+        // 深夜多打哈欠
+        if (hour >= 22 || hour < 6) {
+            const yawn = weights.find(w => w.name === 'yawn');
+            if (yawn) yawn.weight = 40;
+        }
+        // 情绪影响动作选择
+        const moodState = getMoodState();
+        if (moodState === 'happy') {
+            // 开心时多张望少哈欠
+            const look = weights.find(w => w.name === 'lookAround');
+            if (look) look.weight += 15;
+        } else if (moodState === 'lonely') {
+            // 孤独时多哈欠
+            const yawn = weights.find(w => w.name === 'yawn');
+            if (yawn) yawn.weight += 15;
+        }
+        // 降低刚做过的动作权重
+        const last = weights.find(w => w.name === lastIdleAction);
+        if (last) last.weight = Math.max(5, last.weight * 0.3);
+        return weights;
+    }
+
+    function pickIdleAction() {
+        const weights = getTimeAdjustedWeights();
+        const total = weights.reduce((s, w) => s + w.weight, 0);
+        let r = Math.random() * total;
+        for (const w of weights) {
+            r -= w.weight;
+            if (r <= 0) return w;
+        }
+        return weights[0];
+    }
+
+    function startIdleBehavior() {
+        scheduleNextIdle();
+    }
+
+    function scheduleNextIdle() {
+        clearTimeout(idleTimer);
+        const delay = 20000 + Math.random() * 30000; // 20-50秒
+        idleTimer = setTimeout(() => {
+            if (!animating && !chatBusy) {
+                const action = pickIdleAction();
+                lastIdleAction = action.name;
+                action.action();
+            }
+            changeMood(-1); // 情绪随时间缓慢衰减
+            scheduleNextIdle();
+        }, delay);
+    }
+
+    // 呼吸 — scale 缓慢波动
+    function breatheAction() {
+        if (!model || animating) return;
+        const osx = model.scale.x, osy = model.scale.y;
+        animate(2000, t => {
+            const wave = Math.sin(t * Math.PI * 2) * 0.02;
+            model.scale.set(osx * (1 + wave), osy * (1 + wave * 0.5));
+        }, () => { model.scale.set(osx, osy); });
+    }
+
+    // 左右张望
+    function lookAroundAction() {
+        if (!model || animating) return;
+        const ox = model.x;
+        animate(1500, t => {
+            const offset = Math.sin(t * Math.PI * 3) * 8 * DPR * (1 - t * 0.5);
+            model.x = ox + offset;
+        }, () => { model.x = ox; });
+    }
+
+    // 打哈欠 — 纵向拉伸 + 回弹
+    function yawnAction() {
+        if (!model || animating) return;
+        const osx = model.scale.x, osy = model.scale.y;
+        animate(1800, t => {
+            let stretchY, squashX;
+            if (t < 0.3) {
+                // 张嘴伸展
+                const p = t / 0.3;
+                stretchY = 1 + p * 0.06;
+                squashX = 1 - p * 0.03;
+            } else if (t < 0.7) {
+                // 保持
+                stretchY = 1.06;
+                squashX = 0.97;
+            } else {
+                // 回弹
+                const p = (t - 0.7) / 0.3;
+                stretchY = 1.06 - p * 0.06;
+                squashX = 0.97 + p * 0.03;
+            }
+            model.scale.set(osx * squashX, osy * stretchY);
+        }, () => { model.scale.set(osx, osy); });
+    }
+
+    // 呼噜 — 呼吸动画 + 呼噜声 + z Z Z 浮动
+    function purrAction() {
+        if (!model || animating) return;
+        playPurr();
+        const osx = model.scale.x, osy = model.scale.y;
+        // z Z Z 浮动效果
+        const zContainer = new PIXI.Container();
+        pixiApp.stage.addChild(zContainer);
+        const zChars = ['z', 'Z', 'z'];
+        const zTexts = [];
+        zChars.forEach((ch, i) => {
+            const sz = (12 + i * 5) * DPR;
+            const zt = new PIXI.Text(ch, {
+                fontFamily: '"PingFang SC", sans-serif',
+                fontSize: sz, fontWeight: '700',
+                fill: '#7c3aed',
+            });
+            zt.anchor.set(0.5);
+            zt.alpha = 0;
+            zt._delay = i * 0.25; // 依次出现
+            zt._startX = model.x + (30 + i * 18) * DPR;
+            zt._startY = model.y - 40 * DPR;
+            zt.x = zt._startX;
+            zt.y = zt._startY;
+            zContainer.addChild(zt);
+            zTexts.push(zt);
+        });
+        animate(8000, t => {
+            const wave = Math.sin(t * Math.PI * 8) * 0.015;
+            model.scale.set(osx * (1 + wave), osy * (1 + wave * 0.6));
+            // z Z Z 循环浮动（每轮 ~3.5 秒）
+            zTexts.forEach(zt => {
+                const cycle = 0.44; // 每轮占总时长比例
+                const loopT = (t % cycle) / cycle; // 0~1 循环
+                const delayed = Math.max(0, Math.min(1, (loopT - zt._delay) / (1 - zt._delay)));
+                if (delayed <= 0) { zt.alpha = 0; return; }
+                // 最后 10% 总时长整体淡出
+                const fadeOut = t > 0.9 ? (1 - t) / 0.1 : 1;
+                zt.alpha = (delayed < 0.15 ? delayed / 0.15 : delayed > 0.75 ? (1 - delayed) / 0.25 : 1) * fadeOut;
+                zt.y = zt._startY - delayed * 60 * DPR;
+                zt.x = zt._startX + Math.sin(delayed * Math.PI * 2) * 5 * DPR;
+            });
+        }, () => {
+            model.scale.set(osx, osy);
+            pixiApp.stage.removeChild(zContainer);
+            zContainer.destroy({ children: true });
+        });
+    }
+
+    // ==================== Phase 2.2：主动问候系统 ====================
+    let greetingShown = false;
+    let reminderTimer = null;
+
+    function showGreeting() {
+        const hour = new Date().getHours();
+        let greeting;
+        if (hour >= 5 && hour < 9) greeting = '早上好主人！新的一天喵~';
+        else if (hour >= 9 && hour < 12) greeting = '上午好！今天也要加油喵~';
+        else if (hour >= 12 && hour < 14) greeting = '中午好！该吃饭了喵~';
+        else if (hour >= 14 && hour < 18) greeting = '下午好！继续努力喵~';
+        else if (hour >= 18 && hour < 22) greeting = '晚上好主人！辛苦了喵~';
+        else greeting = '深夜了还不睡喵？注意身体~';
+
+        // 每日首次特殊问候
+        const today = new Date().toDateString();
+        const lastGreetDay = localStorage.getItem('pet_last_greet_day');
+        if (lastGreetDay !== today) {
+            localStorage.setItem('pet_last_greet_day', today);
+            greeting = '今天第一次见面喵！' + greeting;
+        }
+
+        // 延迟 1.5 秒后显示（等模型加载完）
+        setTimeout(() => {
+            showBubble(greeting);
+            playMeow();
+        }, 1500);
+
+        // 启动无交互提醒
+        startReminderLoop();
+    }
+
+    const REMINDERS = [
+        '记得喝水喵~',
+        '休息一下眼睛喵~',
+        '站起来动一动喵~',
+        '深呼吸放松一下喵~',
+        '别忘了吃水果喵~',
+    ];
+    let lastReminderIdx = -1;
+
+    function startReminderLoop() {
+        clearInterval(reminderTimer);
+        reminderTimer = setInterval(() => {
+            const idle = Date.now() - lastInteractionTime;
+            if (idle > 30 * 60 * 1000 && !chatBusy) {
+                // 超过30分钟无交互
+                let idx;
+                do { idx = Math.floor(Math.random() * REMINDERS.length); } while (idx === lastReminderIdx);
+                lastReminderIdx = idx;
+                showBubble(REMINDERS[idx]);
+                if (!animating) bounceAction();
+                playMeow();
+            }
+        }, 5 * 60 * 1000); // 每5分钟检查一次
+    }
 
     init();
     </script>

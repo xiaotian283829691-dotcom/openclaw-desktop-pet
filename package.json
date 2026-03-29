@@ -4,13 +4,50 @@
   "description": "OpenClaw 桌面宠物 - 猫团 Live2D",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac",
+    "build": "electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.openclaw.desktop-pet",
+    "productName": "OpenClaw Desktop Pet",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "*.mp3",
+      "黑白猫团/**/*",
+      "蓝粉猫团/**/*",
+      "agents/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": null
+    },
+    "portable": {
+      "artifactName": "OpenClaw-Desktop-Pet-${version}.exe"
+    },
+    "mac": {
+      "target": "dmg"
+    }
   },
   "keywords": [],
-  "author": "",
+  "author": "OnceLab",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
-    "electron": "^41.0.4"
+    "electron": "^41.0.4",
+    "electron-builder": "^26.8.1"
   }
 }
