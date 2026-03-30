@@ -2,6 +2,8 @@
 
 OpenClaw 桌面宠物 — Live2D 猫咪 + 像素风气泡 + AI 对话
 
+<img width="414" height="782" alt="image" src="https://github.com/user-attachments/assets/1683d77a-d251-4c7a-9dfd-ab47d32252c8" />
+
 把你的 [OpenClaw](https://openclaw.ai) 变成一只住在桌面上的小猫咪。
 
 ![preview](https://img.shields.io/badge/Electron-transparent-blue) ![live2d](https://img.shields.io/badge/Live2D-Cubism4-pink) ![openclaw](https://img.shields.io/badge/OpenClaw-Gateway-orange)
